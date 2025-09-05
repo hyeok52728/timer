@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>가상 시간 타이머 (현실 20:00 → 가상 09:00, 3배속)</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Apple SD Gothic Neo, Noto Sans KR, sans-serif; }
+    body { display: grid; place-items: center; min-height: 100svh; margin: 0; background: #0b0f1a; color: #e6eefc; }
+    .card { background: rgba(255,255,255,0.06); padding: 28px 24px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); width: min(720px, 92vw); }
+    h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; letter-spacing: 0.2px; opacity: .95; }
+    .clock { font-variant-numeric: tabular-nums; }
+    .virtual-time { font-size: clamp(28px, 7vw, 56px); font-weight: 800; letter-spacing: 1px; }
+    .virtual-date { margin-top: 6px; font-size: 14px; opacity: .8; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+    .cell { background: rgba(255,255,255,0.06); border-radius: 12px; padding: 12px 14px; }
+    .label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; opacity: .7; }
+    .value { margin-top: 6px; font-size: 16px; font-weight: 600; }
+    .controls { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
+    button { cursor: pointer; border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; background: #3a66ff; color: white; }
+    button.secondary { background: #2a3346; color: #e6eefc; }
+    .hint { margin-top: 10px; font-size: 12px; opacity: .75; line-height: 1.5; }
+    a, a:visited { color: #aaccff; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>가상 시간 타이머 · 현실 20:00 = 가상 09:00 (배율 ×3)</h1>
+
+    <div class="clock">
+      <div class="virtual-time" id="virtualTime">--:--:--</div>
+      <div class="virtual-date" id="virtualDate"></div>
+    </div>
+
+    <div class="row">
+      <div class="cell">
+        <div class="label">현실 기준 구간</div>
+        <div class="value" id="realSpan">20:00:00 → 계속</div>
+      </div>
+      <div class="cell">
+        <div class="label">가상 기준 시각</div>
+        <div class="value" id="virtBase">09:00:00 (기준)</div>
+      </div>
+      <div class="cell">
+        <div class="label">현재 현실 시각</div>
+        <div class="value" id="realNow">--:--:--</div>
+      </div>
+      <div class="cell">
+        <div class="label">현실 경과 / 배율</div>
+        <div class="value" id="progress">-- / ×3</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="syncBtn" class="secondary">지금 시각으로 재동기화</button>
+      <button id="pauseBtn">일시정지</button>
+      <button id="resumeBtn" class="secondary" disabled>재개</button>
+    </div>
+
+    <div class="hint">
+      • 브라우저 로컬 시각(타임존)에 맞춰 자동 동기화됩니다. <br />
+      • “현실 기준”은 <b>오늘 20:00</b> (현재 시간이 20:00 이전이면 <b>어제 20:00</b>)을 기준으로 선형 진행합니다. <br />
+      • 가상 시각은 <b>09:00</b>에서 시작하여 현실 경과 ×3만큼 진행합니다. 자정이 넘어가면 가상 날짜도 함께 증가합니다.
+    </div>
+  </div>
+
+  <script>
+    // 설정값
+    const REAL_BASE_HMS = { h: 20, m: 0, s: 0 }; // 현실 기준 시작: 20:00:00
+    const VIRT_BASE_HMS = { h: 9,  m: 0, s: 0 }; // 가상 기준 시작: 09:00:00
+    const SPEED = 3; // 현실→가상 배율 (1초 → 3초)
+
+    // 상태
+    let paused = false;
+    let pauseStartMs = 0;
+    let totalPausedMs = 0;
+
+    // 엘리먼트
+    const elVirtualTime = document.getElementById('virtualTime');
+    const elVirtualDate = document.getElementById('virtualDate');
+    const elRealSpan    = document.getElementById('realSpan');
+    const elVirtBase    = document.getElementById('virtBase');
+    const elRealNow     = document.getElementById('realNow');
+    const elProgress    = document.getElementById('progress');
+    const btnSync       = document.getElementById('syncBtn');
+    const btnPause      = document.getElementById('pauseBtn');
+    const btnResume     = document.getElementById('resumeBtn');
+
+    function pad(n){ return String(n).padStart(2, '0'); }
+    function fmtHMS(date){
+      return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+    function fmtDate(date){
+      const y = date.getFullYear();
+      const m = pad(date.getMonth()+1);
+      const d = pad(date.getDate());
+      return `${y}-${m}-${d}`;
+    }
+    function fmtDur(ms){
+      const s = Math.max(0, Math.floor(ms/1000));
+      const hh = Math.floor(s/3600);
+      const mm = Math.floor((s%3600)/60);
+      const ss = s % 60;
+      return `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
+    }
+
+    function getRealBase(now){
+      // 오늘 20:00(로컬) Date 만들기
+      const base = new Date(now);
+      base.setHours(REAL_BASE_HMS.h, REAL_BASE_HMS.m, REAL_BASE_HMS.s, 0);
+      // 현재가 20:00 이전이면 "어제 20:00"을 기준으로 사용
+      if (now < base) base.setDate(base.getDate() - 1);
+      return base;
+    }
+
+    function getVirtBaseFromRealBase(realBase){
+      // 가상 기준은 현실 기준과 같은 날짜의 09:00부터 시작
+      const v = new Date(realBase);
+      v.setHours(VIRT_BASE_HMS.h, VIRT_BASE_HMS.m, VIRT_BASE_HMS.s, 0);
+      return v;
+    }
+
+    function computeVirtualNow(now, realBase, virtBase){
+      // (now - realBase - 일시정지 누적) × SPEED 를 가상 경과로 더함
+      const effectiveMs = now.getTime() - realBase.getTime() - totalPausedMs;
+      const virtMs = effectiveMs * SPEED;
+      return new Date(virtBase.getTime() + virtMs);
+    }
+
+    // 초기 동기화
+    let realBase = getRealBase(new Date());
+    let virtBase = getVirtBaseFromRealBase(realBase);
+
+    function syncNow(){
+      totalPausedMs = 0;
+      paused = false;
+      btnResume.disabled = true;
+      btnPause.disabled = false;
+
+      const now = new Date();
+      realBase = getRealBase(now);
+      virtBase = getVirtBaseFromRealBase(realBase);
+      // UI 표기 업데이트
+      elRealSpan.textContent = `${fmtHMS(realBase)} → 계속`;
+      elVirtBase.textContent = `${fmtHMS(virtBase)} (기준)`;
+    }
+
+    btnSync.addEventListener('click', syncNow);
+
+    btnPause.addEventListener('click', ()=>{
+      if (paused) return;
+      paused = true;
+      pauseStartMs = Date.now();
+      btnPause.disabled = true;
+      btnResume.disabled = false;
+    });
+
+    btnResume.addEventListener('click', ()=>{
+      if (!paused) return;
+      paused = false;
+      const nowMs = Date.now();
+      totalPausedMs += (nowMs - pauseStartMs);
+      btnPause.disabled = false;
+      btnResume.disabled = true;
+    });
+
+    function tick(){
+      const now = new Date();
+
+      // 정보 표시
+      elRealNow.textContent = fmtHMS(now);
+
+      // 계산/표시
+      let virtNow;
+      if (paused){
+        // 일시정지 중엔 마지막 시점(일시정지 버튼 누른 직전)의 가상시간을 고정해 보여주기 위해
+        const pausedNow = new Date(pauseStartMs);
+        virtNow = computeVirtualNow(pausedNow, realBase, virtBase);
+      } else {
+        virtNow = computeVirtualNow(now, realBase, virtBase);
+      }
+
+      elVirtualTime.textContent = fmtHMS(virtNow);
+      elVirtualDate.textContent = `가상 날짜: ${fmtDate(virtNow)}`;
+
+      // 진행도(현실 경과 / 배율)
+      const elapsedRealMs = (paused ? pauseStartMs : Date.now()) - realBase.getTime() - totalPausedMs;
+      elProgress.textContent = `${fmtDur(elapsedRealMs)} / ×${SPEED}`;
+
+      // 다음 프레임 예약 (1초 주기로 충분)
+      setTimeout(tick, 1000 - (Date.now() % 1000)); // 초 경계에 맞춰 매끄럽게
+    }
+
+    // 시작
+    syncNow();
+    tick();
+  </script>
+</body>
+</html>
