@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>모의수사경진대회 시각 타이머 (Centered)</title>
+<style>
+  /* --- Reset & Base --- */
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  :root { --bg:#000; --fg:#fff; --chip:#8f8f8f; --panel:#121212; --btn:#7f7f7f; --btn2:#2b2b2b; }
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Noto Sans KR,sans-serif;
+    display:grid; place-items:center; min-height:100vh; overflow-x:hidden;
+  }
+
+  /* --- Stage centered --- */
+  .stage{ width:min(1200px,96vw); margin-inline:auto; padding:24px; }
+
+  /* --- Layout --- */
+  .grid{ display:grid; grid-template-columns: 1.6fr .9fr; gap:32px; align-items:start; }
+  @media (max-width: 880px){ .grid{ grid-template-columns:1fr; gap:22px; } }
+
+  /* --- Cards --- */
+  .titlechip{ background:var(--chip); color:#111; font-weight:800; letter-spacing:.08em; padding:10px 14px; border-radius:8px; text-align:center; }
+  .panel{ background:var(--panel); border-radius:14px; padding:18px 22px; }
+  .datebig{ font-size:clamp(28px, 6.5vw, 80px); font-weight:800; letter-spacing:.04em; margin:6px 0 10px; color:#dfe6ff; text-align:center; }
+  .timebig{ font-size:clamp(80px, 17vw, 220px); font-weight:900; line-height:1; letter-spacing:.02em; text-align:center; word-break:keep-all; }
+  .datesm{ font-size:clamp(16px, 2.6vw, 26px); color:#dfe6ff; margin:8px 0 6px; text-align:center; }
+  .timesm{ font-size:clamp(40px, 8vw, 90px); font-weight:800; line-height:1.1; text-align:center; }
+  .note{ margin-top:10px; color:#c5c5c5; font-size:12px; text-align:center; }
+
+  .controls{ display:flex; gap:8px; justify-content:center; margin-top:16px; flex-wrap:wrap; }
+  .btn{ cursor:pointer; border:0; border-radius:12px; background:var(--btn); color:#111; font-weight:800; padding:10px 14px; }
+  .btn.alt{ background:var(--btn2); color:#eaeaea; border:1px solid #333 }
+  .btn:active{ transform:translateY(1px); }
+
+  /* Modal */
+  .modal{ position:fixed; inset:0; display:none; place-items:center; background:rgba(0,0,0,.55) }
+  .modal.open{ display:grid }
+  .sheet{ width:min(760px,96vw); background:#0e0e0e; color:#eee; border:1px solid #242424; border-radius:16px; padding:18px }
+  .rows{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  @media (max-width:640px){ .rows{ grid-template-columns:1fr } }
+  .card{ background:#131313; border:1px solid #242424; border-radius:12px; padding:12px }
+  .card h4{ margin:0 0 8px; color:#c9d4ff; font-size:14px; letter-spacing:.06em }
+  .pad{ display:grid; grid-template-columns:repeat(5,1fr); gap:8px }
+  .pad button{ border:1px solid #2b2b2b; background:#202020; color:#dfe6ff; border-radius:10px; padding:10px 8px; font-weight:700; cursor:pointer }
+  .pad button:hover{ background:#2a2a2a }
+  .legend{ font-size:12px; color:#aaa; margin-top:6px }
+  .footer{ display:flex; justify-content:space-between; margin-top:12px }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="grid">
+      <!-- Left: Virtual -->
+      <section>
+        <div class="titlechip">모의수사경진대회 시각</div>
+        <div class="panel">
+          <div class="datebig" id="vDate">XXXX-XX-XX</div>
+          <div class="timebig" id="vTime">00:00:00.0</div>
+          <div class="note" id="vMeta"></div>
+        </div>
+      </section>
+
+      <!-- Right: Real -->
+      <aside>
+        <div class="titlechip">실제 시각</div>
+        <div class="panel">
+          <div class="datesm" id="rDate">XXXX-XX-XX</div>
+          <div class="timesm" id="rTime">00:00:00</div>
+        </div>
+        <div class="controls">
+          <button class="btn" id="openAdjust">일시 조정</button>
+          <button class="btn alt" id="toggleSmooth">초 표시: 소수1자리</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal" id="modal">
+    <div class="sheet">
+      <h3 style="margin:4px 0 12px">일시 조정</h3>
+      <div class="rows">
+        <div class="card">
+          <h4>현실 기준 시작 (기본: 오늘 20:00, 이전이면 어제 20:00)</h4>
+          <div class="pad">
+            <button data-real="+1d">+1일</button><button data-real="-1d">-1일</button>
+            <button data-real="+1h">+1시간</button><button data-real="-1h">-1시간</button>
+            <button data-real="reset">초기화</button>
+            <button data-real="+1m">+1분</button><button data-real="-1m">-1분</button>
+          </div>
+          <div class="legend" id="realLegend">기준: —</div>
+        </div>
+        <div class="card">
+          <h4>가상 기준 시작 (기본: 같은 날 09:00)</h4>
+          <div class="pad">
+            <button data-virt="+1d">+1일</button><button data-virt="-1d">-1일</button>
+            <button data-virt="+1h">+1시간</button><button data-virt="-1h">-1시간</button>
+            <button data-virt="reset">초기화</button>
+            <button data-virt="+1m">+1분</button><button data-virt="-1m">-1분</button>
+          </div>
+          <div class="legend" id="virtLegend">기준: —</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h4>배율 (현실 → 가상)</h4>
+        <div class="pad" style="grid-template-columns:repeat(6,1fr)">
+          <button data-speed="1">×1</button><button data-speed="2">×2</button>
+          <button data-speed="3">×3</button><button data-speed="4">×4</button>
+          <button data-speed="6">×6</button><button data-speed="9">×9</button>
+        </div>
+        <div class="legend" id="speedLegend">현재 배율: ×3</div>
+      </div>
+      <div class="footer">
+        <button class="btn alt" id="closeAdjust">닫기</button>
+        <button class="btn alt" id="hardReset">모두 초기화</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  /* ===== Logic (same as 이전 버전, 중앙정렬만 변경) ===== */
+  const REAL_BASE_HMS = { h:20, m:0, s:0 };
+  const VIRT_BASE_HMS = { h:9,  m:0, s:0 };
+  let SPEED = 3, smoothFraction = true;
+
+  let realBase, virtBase, realBaseInit, virtBaseInit;
+
+  const pad = n => String(n).padStart(2,'0');
+  const fmtDate = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const fmtHMS  = d => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const add = (d,{dys=0,hrs=0,mins=0}) => new Date(d.getTime() + (dys*864e5 + hrs*3600e3 + mins*60e3));
+
+  function getDefaultRealBase(now=new Date()){
+    const base = new Date(now);
+    base.setHours(REAL_BASE_HMS.h, REAL_BASE_HMS.m, REAL_BASE_HMS.s, 0);
+    if (now < base) base.setDate(base.getDate()-1);
+    return base;
+  }
+  function getDefaultVirtBase(realBase){
+    const v = new Date(realBase);
+    v.setHours(VIRT_BASE_HMS.h, VIRT_BASE_HMS.m, VIRT_BASE_HMS.s, 0);
+    return v;
+  }
+  function computeVirtual(nowMs){ return new Date(virtBase.getTime() + (nowMs - realBase.getTime()) * SPEED); }
+
+  function initialize(){
+    const now = new Date();
+    realBase = getDefaultRealBase(now);
+    virtBase = getDefaultVirtBase(realBase);
+    realBaseInit = new Date(realBase.getTime());
+    virtBaseInit = new Date(virtBase.getTime());
+    updateLegends();
+  }
+
+  const elVDate=document.getElementById('vDate'), elVTime=document.getElementById('vTime'),
+        elVMeta=document.getElementById('vMeta'), elRDate=document.getElementById('rDate'),
+        elRTime=document.getElementById('rTime'), elSpeedLegend=document.getElementById('speedLegend'),
+        elRealLegend=document.getElementById('realLegend'), elVirtLegend=document.getElementById('virtLegend'),
+        btnToggleSmooth=document.getElementById('toggleSmooth');
+
+  function render(){
+    const nowMs = Date.now();
+    const realNow = new Date(nowMs);
+    elRDate.textContent = fmtDate(realNow);
+    elRTime.textContent = fmtHMS(realNow);
+
+    const vNow = computeVirtual(nowMs);
+    elVDate.textContent = fmtDate(vNow);
+    if (smoothFraction){
+      const secs = vNow.getSeconds() + vNow.getMilliseconds()/1000;
+      elVTime.textContent = `${pad(vNow.getHours())}:${pad(vNow.getMinutes())}:${pad(Math.floor(secs))}.${Math.floor((secs%1)*10)}`;
+    } else {
+      elVTime.textContent = fmtHMS(vNow);
+    }
+    elVMeta.textContent = `기준(현실 ${fmtHMS(realBase)}) → (가상 ${fmtHMS(virtBase)}) · 배율 ×${SPEED}`;
+    requestAnimationFrame(render);
+  }
+
+  const modal=document.getElementById('modal');
+  document.getElementById('openAdjust').addEventListener('click',()=>{ modal.classList.add('open'); updateLegends(); });
+  document.getElementById('closeAdjust').addEventListener('click',()=> modal.classList.remove('open'));
+  document.getElementById('hardReset').addEventListener('click',()=>{
+    realBase = new Date(realBaseInit.getTime());
+    virtBase = new Date(virtBaseInit.getTime());
+    SPEED = 3; updateLegends();
+  });
+  function updateLegends(){
+    elRealLegend.textContent = `기준: ${fmtDate(realBase)} ${fmtHMS(realBase)}`;
+    elVirtLegend.textContent = `기준: ${fmtDate(virtBase)} ${fmtHMS(virtBase)}`;
+    elSpeedLegend.textContent = `현재 배율: ×${SPEED}`;
+  }
+  document.addEventListener('click',(e)=>{
+    const t=e.target; if(!(t instanceof HTMLButtonElement)) return;
+    if(t.dataset.real){
+      const v=t.dataset.real;
+      if(v==='reset') realBase=new Date(realBaseInit.getTime());
+      else if(v==='+1d') realBase=add(realBase,{dys:+1});
+      else if(v==='-1d') realBase=add(realBase,{dys:-1});
+      else if(v==='+1h') realBase=add(realBase,{hrs:+1});
+      else if(v==='-1h') realBase=add(realBase,{hrs:-1});
+      else if(v==='+1m') realBase=add(realBase,{mins:+1});
+      else if(v==='-1m') realBase=add(realBase,{mins:-1});
+      updateLegends();
+    }
+    if(t.dataset.virt){
+      const v=t.dataset.virt;
+      if(v==='reset') virtBase=new Date(virtBaseInit.getTime());
+      else if(v==='+1d') virtBase=add(virtBase,{dys:+1});
+      else if(v==='-1d') virtBase=add(virtBase,{dys:-1});
+      else if(v==='+1h') virtBase=add(virtBase,{hrs:+1});
+      else if(v==='-1h') virtBase=add(virtBase,{hrs:-1});
+      else if(v==='+1m') virtBase=add(virtBase,{mins:+1});
+      else if(v==='-1m') virtBase=add(virtBase,{mins:-1});
+      updateLegends();
+    }
+    if(t.dataset.speed){ SPEED=Number(t.dataset.speed); updateLegends(); }
+  });
+
+  btnToggleSmooth.addEventListener('click',()=>{
+    smoothFraction=!smoothFraction;
+    btnToggleSmooth.textContent = smoothFraction ? '초 표시: 소수1자리' : '초 표시: 정수초';
+  });
+
+  initialize(); render();
+</script>
+</body>
+</html>
